@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Мой помощник</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:var(--tg-theme-bg-color,#fff);
+    --text:var(--tg-theme-text-color,#111);
+    --hint:var(--tg-theme-hint-color,#8a8a8e);
+    --card:var(--tg-theme-secondary-bg-color,#f1f1f4);
+    --btn:var(--tg-theme-button-color,#2f80ed);
+    --btn-text:var(--tg-theme-button-text-color,#fff);
+    --danger:#e5484d;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,sans-serif;padding-bottom:80px}
+  .tabs{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);padding-bottom:env(safe-area-inset-bottom);z-index:5}
+  .tabs button{flex:1;border:0;background:none;color:var(--hint);padding:10px 0 12px;font-size:12px}
+  .tabs button span{display:block;font-size:22px}
+  .tabs button.on{color:var(--btn)}
+  .sync{position:absolute;top:18px;right:16px;font-size:12px;color:var(--hint)}
+  section{display:none;padding:16px}
+  section.on{display:block}
+  h2{margin:0 0 12px;font-size:20px}
+  .card{background:var(--card);border-radius:14px;padding:12px;margin-bottom:10px}
+  textarea,input,select{width:100%;border:0;border-radius:10px;background:var(--card);color:var(--text);font:inherit;padding:10px 12px;outline:none}
+  textarea{resize:none;min-height:80px}
+  .row{display:flex;gap:8px;margin-bottom:10px}
+  .row>*{min-width:0}
+  .row input,.row select{flex:1;width:auto}
+  button.pri{background:var(--btn);color:var(--btn-text);border:0;border-radius:10px;padding:10px 16px;font:inherit;font-weight:600}
+  button.mic{width:46px;flex:none;border:0;border-radius:10px;background:var(--card);font-size:22px}
+  button.mic.rec{background:var(--danger);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.55}}
+  .x{border:0;background:none;color:var(--hint);font-size:18px;padding:0 4px}
+  .item{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+  .item small{color:var(--hint)}
+  .note-text{white-space:pre-wrap;word-break:break-word}
+  .sum{font-size:28px;font-weight:700}
+  .bar{height:6px;border-radius:3px;background:var(--btn);margin-top:4px}
+  .dots{display:flex;gap:5px;margin-top:6px}
+  .dot{width:22px;height:22px;border-radius:50%;background:var(--bg);display:grid;place-items:center;font-size:10px;color:var(--hint)}
+  .dot.done{background:var(--btn);color:var(--btn-text)}
+  .check{width:34px;height:34px;flex:none;border-radius:50%;border:2px solid var(--btn);background:none;color:var(--btn-text);font-size:18px}
+  .check.done{background:var(--btn)}
+  .hint{color:var(--hint);font-size:13px;margin:4px 0 10px}
+  .empty{text-align:center;color:var(--hint);padding:24px 0}
+</style>
+</head>
+<body>
+
+<div class="sync" id="sync"></div>
+
+<section id="notes" class="on">
+  <h2>Заметки</h2>
+  <textarea id="noteInput" placeholder="Напишите или надиктуйте…"></textarea>
+  <div class="row" style="margin-top:8px">
+    <button class="mic" id="mic" title="Голосовой ввод">🎤</button>
+    <button class="pri" id="noteAdd" style="flex:1">Сохранить заметку</button>
+  </div>
+  <div class="hint" id="micHint"></div>
+  <div id="noteList"></div>
+</section>
+
+<section id="money">
+  <h2>Траты</h2>
+  <div class="card">
+    <div class="hint" style="margin:0">В этом месяце</div>
+    <div class="sum" id="monthSum">0</div>
+    <div id="cats"></div>
+  </div>
+  <div class="row">
+    <input id="amount" type="number" inputmode="decimal" placeholder="Сумма">
+    <select id="cat">
+      <option>Еда</option><option>Транспорт</option><option>Дом</option>
+      <option>Подписки</option><option>Развлечения</option><option>Здоровье</option><option>Другое</option>
+    </select>
+  </div>
+  <div class="row">
+    <input id="comment" placeholder="Комментарий (необязательно)">
+    <button class="pri" id="spendAdd">+</button>
+  </div>
+  <div id="spendList"></div>
+</section>
+
+<section id="habits">
+  <h2>Привычки</h2>
+  <div class="row">
+    <input id="habitInput" placeholder="Новая привычка">
+    <button class="pri" id="habitAdd">+</button>
+  </div>
+  <div id="habitList"></div>
+</section>
+
+<nav class="tabs">
+  <button class="on" data-t="notes"><span>📝</span>Заметки</button>
+  <button data-t="money"><span>💸</span>Траты</button>
+  <button data-t="habits"><span>✅</span>Привычки</button>
+</nav>
+
+<script>
+const tg = window.Telegram && Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const dayKey = d => { d = d || new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+const fmtDate = ts => new Date(ts).toLocaleString('ru-RU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+const buzz = () => { try { tg.HapticFeedback.impactOccurred('light'); } catch {} };
+const newId = () => Date.now() * 100 + Math.floor(Math.random() * 100);
+
+// ---------- локальное хранилище ----------
+// Каждая запись: {id, u: время последнего изменения, ...}. Удалённые остаются как {id, del: true, u},
+// чтобы удаление тоже доходило до других устройств.
+const KEYS = ['notes', 'spends', 'habits'];
+const uid = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) || 'local';
+const loadLocal = k => { try { return (JSON.parse(localStorage.getItem(`${uid}:${k}`)) || []).map(x => ({u: x.id, ...x})); } catch { return []; } };
+const saveLocal = k => { try { localStorage.setItem(`${uid}:${k}`, JSON.stringify(db[k])); } catch {} };
+const db = {}; KEYS.forEach(k => db[k] = loadLocal(k));
+const live = k => db[k].filter(x => !x.del);
+
+function put(k, item) {
+  item.u = Date.now();
+  db[k] = [item, ...db[k].filter(x => x.id !== item.id)];
+  saveLocal(k); render[k](); sync(k); buzz();
+}
+window.del = (k, id) => put(k, {id, del: true});
+
+// ---------- облачная синхронизация (Telegram CloudStorage) ----------
+// Значение ключа ≤ 4096 символов, поэтому JSON режется на куски: notes_0, notes_1, … и notes_n = число кусков.
+let cs = tg && tg.isVersionAtLeast && tg.isVersionAtLeast('6.9') ? tg.CloudStorage : null;
+const CHUNK = 2000;
+const call = (m, ...a) => new Promise((ok, fail) => cs[m](...a, (e, v) => e ? fail(e) : ok(v)));
+
+async function cloudLoad(k) {
+  const n = parseInt(await call('getItem', `${k}_n`)) || 0;
+  if (!n) return {items: [], n};
+  const keys = [...Array(n)].map((_, i) => `${k}_${i}`);
+  const parts = await call('getItems', keys);
+  try { return {items: JSON.parse(keys.map(x => parts[x] || '').join('')), n}; }
+  catch { return {items: [], n}; } // недописанная запись — перезапишем из локальных данных
+}
+
+async function cloudSave(k, items, oldN) {
+  const s = JSON.stringify(items), n = Math.ceil(s.length / CHUNK);
+  await Promise.all([...Array(n)].map((_, i) => call('setItem', `${k}_${i}`, s.slice(i * CHUNK, (i + 1) * CHUNK))));
+  await call('setItem', `${k}_n`, String(n));
+  if (oldN > n) await call('removeItems', [...Array(oldN - n)].map((_, i) => `${k}_${n + i}`));
+}
+
+// Слияние по id: побеждает более свежее изменение. Старые «надгробия» (>60 дней) выбрасываем.
+function merge(a, b) {
+  const m = new Map();
+  [...a, ...b].forEach(x => { const y = m.get(x.id); if (!y || x.u > y.u) m.set(x.id, x); });
+  const cut = Date.now() - 60 * 864e5;
+  return [...m.values()].filter(x => !(x.del && x.u < cut)).sort((x, y) => y.id - x.id);
+}
+
+const queue = {}, failed = new Set();
+let pending = 0;
+function showStatus() {
+  $('sync').textContent = !cs ? '📱 только это устройство'
+    : pending ? '⏳ синхронизация…'
+    : failed.size ? '⚠️ нет связи с облаком'
+    : '☁️ синхронизировано';
+}
+function sync(k) {
+  if (!cs) return;
+  pending++; showStatus();
+  queue[k] = (queue[k] || Promise.resolve()).then(async () => {
+    try {
+      const {items, n} = await cloudLoad(k);
+      const merged = merge(db[k], items);
+      if (JSON.stringify(merged) !== JSON.stringify(db[k])) { db[k] = merged; saveLocal(k); render[k](); }
+      if (JSON.stringify(merged) !== JSON.stringify(items)) await cloudSave(k, merged, n);
+      failed.delete(k);
+    } catch {
+      failed.add(k);
+      setTimeout(() => sync(k), 20000);
+    } finally {
+      pending--; showStatus();
+    }
+  });
+}
+let lastAll = 0;
+function syncAll() {
+  if (Date.now() - lastAll < 2000) return;
+  lastAll = Date.now(); KEYS.forEach(sync);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncAll(); });
+if (tg) tg.onEvent('activated', syncAll);
+
+// ---------- вкладки ----------
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === b.dataset.t));
+  buzz();
+});
+
+// ---------- заметки + голос ----------
+function renderNotes() {
+  const list = live('notes').sort((a, b) => b.ts - a.ts);
+  $('noteList').innerHTML = list.length ? list.map(n => `
+    <div class="card item"><div><div class="note-text">${esc(n.text)}</div><small>${fmtDate(n.ts)}${n.voice ? ' · 🎤' : ''}</small></div>
+    <button class="x" onclick="del('notes', ${n.id})">✕</button></div>`).join('')
+    : '<div class="empty">Заметок пока нет</div>';
+}
+let fromVoice = false;
+$('noteAdd').onclick = () => {
+  const text = $('noteInput').value.trim();
+  if (!text) return;
+  put('notes', {id: newId(), ts: Date.now(), text, voice: fromVoice});
+  $('noteInput').value = ''; fromVoice = false;
+};
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, recording = false;
+if (!SR) {
+  $('micHint').textContent = 'Распознавание речи не поддерживается в этом окне. Нажмите на поле ввода и используйте 🎤 на клавиатуре телефона.';
+}
+$('mic').onclick = () => {
+  if (!SR) { $('noteInput').focus(); return; }
+  if (recording) { rec.stop(); return; }
+  rec = new SR();
+  rec.lang = 'ru-RU'; rec.interimResults = true; rec.continuous = true;
+  const base = $('noteInput').value ? $('noteInput').value.trimEnd() + ' ' : '';
+  rec.onresult = e => {
+    let t = ''; for (const r of e.results) t += r[0].transcript;
+    $('noteInput').value = base + t; fromVoice = true;
+  };
+  rec.onstart = () => { recording = true; $('mic').classList.add('rec'); };
+  rec.onend = () => { recording = false; $('mic').classList.remove('rec'); };
+  rec.onerror = e => {
+    $('micHint').textContent = e.error === 'not-allowed' ? 'Нет доступа к микрофону. Разрешите его в настройках Telegram.' : 'Ошибка распознавания: ' + e.error;
+  };
+  try { rec.start(); } catch {}
+};
+
+// ---------- траты ----------
+function renderSpends() {
+  const all = live('spends').sort((a, b) => b.ts - a.ts);
+  const now = new Date(), m = `${now.getFullYear()}-${now.getMonth()}`;
+  const mine = all.filter(s => { const d = new Date(s.ts); return `${d.getFullYear()}-${d.getMonth()}` === m; });
+  const total = mine.reduce((a, s) => a + s.amount, 0);
+  $('monthSum').textContent = total.toLocaleString('ru-RU', {maximumFractionDigits: 2});
+  const by = {}; mine.forEach(s => by[s.cat] = (by[s.cat] || 0) + s.amount);
+  $('cats').innerHTML = Object.entries(by).sort((a, b) => b[1] - a[1]).map(([c, v]) =>
+    `<div style="margin-top:8px"><div class="item"><span>${c}</span><span>${v.toLocaleString('ru-RU')}</span></div>
+     <div class="bar" style="width:${Math.max(3, v / total * 100)}%"></div></div>`).join('');
+  $('spendList').innerHTML = all.length ? all.slice(0, 50).map(s => `
+    <div class="card item"><div><b>${s.amount.toLocaleString('ru-RU')}</b> · ${s.cat}
+    ${s.comment ? `<div>${esc(s.comment)}</div>` : ''}<small>${fmtDate(s.ts)}</small></div>
+    <button class="x" onclick="del('spends', ${s.id})">✕</button></div>`).join('')
+    : '<div class="empty">Трат пока нет</div>';
+}
+$('spendAdd').onclick = () => {
+  const amount = parseFloat($('amount').value.replace(',', '.'));
+  if (!(amount > 0)) return;
+  put('spends', {id: newId(), ts: Date.now(), amount, cat: $('cat').value, comment: $('comment').value.trim()});
+  $('amount').value = ''; $('comment').value = '';
+};
+
+// ---------- привычки ----------
+function streak(h) {
+  let n = 0, d = new Date();
+  if (!h.done.includes(dayKey(d))) d.setDate(d.getDate() - 1);
+  while (h.done.includes(dayKey(d))) { n++; d.setDate(d.getDate() - 1); }
+  return n;
+}
+function renderHabits() {
+  const today = dayKey(), list = live('habits').sort((a, b) => a.id - b.id);
+  $('habitList').innerHTML = list.length ? list.map(h => {
+    const dots = [...Array(7)].map((_, i) => {
+      const d = new Date(); d.setDate(d.getDate() - (6 - i));
+      return `<div class="dot ${h.done.includes(dayKey(d)) ? 'done' : ''}">${d.getDate()}</div>`;
+    }).join('');
+    const on = h.done.includes(today);
+    return `<div class="card"><div class="item" style="align-items:center">
+      <button class="check ${on ? 'done' : ''}" onclick="toggleHabit(${h.id})">${on ? '✓' : ''}</button>
+      <div style="flex:1"><b>${esc(h.name)}</b><br><small>🔥 серия: ${streak(h)}</small></div>
+      <button class="x" onclick="del('habits', ${h.id})">✕</button></div>
+      <div class="dots">${dots}</div></div>`;
+  }).join('') : '<div class="empty">Добавьте первую привычку</div>';
+}
+$('habitAdd').onclick = () => {
+  const name = $('habitInput').value.trim();
+  if (!name) return;
+  put('habits', {id: newId(), name, done: []});
+  $('habitInput').value = '';
+};
+window.toggleHabit = id => {
+  const h = db.habits.find(x => x.id === id), t = dayKey();
+  put('habits', {...h, done: h.done.includes(t) ? h.done.filter(d => d !== t) : [...h.done, t]});
+};
+
+const render = {notes: renderNotes, spends: renderSpends, habits: renderHabits};
+KEYS.forEach(k => render[k]());
+showStatus();
+syncAll();
+</script>
+</body>
+</html>
